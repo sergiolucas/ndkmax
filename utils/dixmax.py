@@ -2,6 +2,9 @@ import httpx
 
 import state
 from config import URL_BASE, APP_KEY, AUTH_STR
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class Perfil:
     def __init__(self, credenciales: str):
@@ -55,11 +58,17 @@ async def obtener_enlace(client, media_id: str, is_movie: bool, season=0, episod
     sid = perfil.sid
     tipo = 0 if is_movie else 1
 
-    url = f"{URL_BASE}/get/hash_link_v5/{APP_KEY}/{sid}/{tipo}/{media_id}"
+    url = f"{URL_BASE}/get/hash_link_v6/{APP_KEY}/{sid}/{tipo}/{media_id}"
     data = {"auth": AUTH_STR, "season": season, "episode": episode}
 
+    logger.debug(f"[DIXMAX] POST {url}")
+    logger.debug(f"[DIXMAX] Body: {data}")
+
     resp = await client.post(url, json=data)
+    logger.info(f"[DIXMAX] Status: {resp.status_code} | Response: {resp.text[:500]}")
+
     if resp.status_code == 200:
-        data = resp.json().get("data", [])
-        return data if isinstance(data, list) else [data]
+        json_data = resp.json()
+        result = json_data.get("data", [])
+        return result if isinstance(result, list) else [result]
     return []
