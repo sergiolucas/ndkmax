@@ -150,15 +150,19 @@ async def get_results(stream_type: str, stream_id: str, response: Response):
             if search_results:
                 LINK_CACHE[cache_key] = search_results
 
+        logger.info(f"[STREAM] search_results for {cache_key}: {search_results}")
         if not search_results: return {"streams": []}
 
         final_streams = []
 
         for result_url in search_results:
+            logger.info(f"[STREAM] Fetching manifest from: {result_url}")
             content, status, _ = await get_or_fetch_content(result_url)
+            logger.info(f"[STREAM] Manifest status={status}, content_len={len(content) if content else 0}, first_200={content[:200] if content else 'None'}")
             
             if status == 200 and content:
                 streams = parse_manifest_to_qualities(result_url, titulo, duracion, content)
+                logger.info(f"[STREAM] Parsed {len(streams)} streams from manifest")
                 final_streams.extend(streams)
 
         return {"streams": final_streams}
