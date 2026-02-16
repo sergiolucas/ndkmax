@@ -120,7 +120,8 @@ async def get_manifest():
     }
 
 @app.get("/stream/{stream_type}/{stream_id}")
-async def get_results(stream_type: str, stream_id: str):
+async def get_results(stream_type: str, stream_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     try:
         stream_id_clean = stream_id.replace(".json", "")
         metadata_provider = TMDB(http_client)
