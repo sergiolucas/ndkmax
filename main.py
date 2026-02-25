@@ -10,7 +10,7 @@ from metadata.tmdb import TMDB
 from utils.logger import setup_logger
 from utils.stremio_parser import parse_manifest_to_qualities
 from utils.dixmax import GestorPerfiles, Perfil, obtener_enlace
-from utils.hls_proxy import fetch_and_rewrite_manifest, filter_manifest_by_quality
+from utils.hls_proxy import fetch_and_rewrite_manifest, filter_manifest_by_quality, diagnose_manifest
 from config import PERFILES, ROOT_PATH, IS_DEV, VERSION, ADDON_URL
 
 logger = setup_logger(__name__)
@@ -169,6 +169,85 @@ async def get_results(stream_type: str, stream_id: str, response: Response):
     except Exception as e:
         logger.error(f"Error en streams: {e}")
         return {"streams": []}
+
+@app.get("/debug/check/{stream_type}/{stream_id}")
+async def debug_check(stream_type: str, stream_id: str):
+    try:
+        stream_id_clean = stream_id.replace(".json", "")
+        metadata_provider = TMDB(http_client)
+        media = await metadata_provider.get_metadata(stream_id_clean, stream_type)
+
+        if not media:
+            return {"error": "No metadata found"}
+
+        is_movie = (media.type == "movie")
+        season = getattr(media, 'season', 0)
+        episode = getattr(media, 'episode', 0)
+        titulo = media.titles[0] if is_movie else f"{media.titles[0]} S{media.season}E{media.episode}"
+
+        # Raw Dixmax API call to see exactly what it returns
+        from config import URL_BASE, APP_KEY, AUTH_STR
+        perfil = state.gestor.siguiente()
+        sid = perfil.sid
+        tipo = 0 if is_movie else 1
+        dixmax_url = f"{URL_BASE}/get/tv_hash_link_v6/{APP_KEY}/{sid}/{tipo}/{media.id}"
+        dixmax_body = {"auth": AUTH_STR, "season": season, "episode": episode}
+
+        dixmax_resp = await http_client.post(dixmax_url, json=dixmax_body)
+        dixmax_raw = dixmax_resp.json()
+
+        search_results = dixmax_raw.get("data", [])
+        if not isinstance(search_results, list):
+            search_results = [search_results]
+
+        # Classify URLs
+        url_analysis = []
+        for url in search_results:
+            is_hls = url.endswith(".m3u8") or ".m3u8" in url
+            is_forbidden = "forbidden" in url.lower()
+            url_analysis.append({
+                "url": url,
+                "type": "hls" if is_hls else "direct",
+                "is_forbidden": is_forbidden,
+            })
+
+        # Only run HLS diagnosis on actual .m3u8 URLs
+        hls_diagnostics = []
+        for url in search_results:
+            if ".m3u8" in url:
+                diag = await diagnose_manifest(http_client, url)
+                hls_diagnostics.append(diag)
+
+        # Diagnosis
+        if all(u["is_forbidden"] for u in url_analysis):
+            diagnosis = "FORBIDDEN - Dixmax devuelve forbidden.mp4 para todas las URLs. La API detecta acceso fuera de la app."
+        elif any(u["is_forbidden"] for u in url_analysis):
+            diagnosis = "PARTIAL_FORBIDDEN - Algunas URLs son forbidden, otras no."
+        elif not hls_diagnostics:
+            diagnosis = "NO_HLS - No hay URLs .m3u8, solo enlaces directos."
+        else:
+            any_blocked = any(
+                s.get("status") in (401, 403)
+                for d in hls_diagnostics
+                for v in d.get("variants", [])
+                for s in v.get("segments", [])
+            )
+            if any_blocked:
+                diagnosis = "SEGMENTS_BLOCKED - Restricción de IP en segmentos."
+            else:
+                diagnosis = "ALL_OK - Todo accesible desde el servidor."
+
+        return {
+            "media": titulo,
+            "dixmax_api_response": dixmax_raw,
+            "urls": url_analysis,
+            "hls_diagnostics": hls_diagnostics,
+            "diagnosis": diagnosis,
+            "perfil_usado": perfil.username,
+        }
+    except Exception as e:
+        logger.error(f"Error en debug check: {e}")
+        return {"error": str(e)}
 
 @crontab("0 */4 * * *", start=not IS_DEV)
 async def actualizar_perfiles():

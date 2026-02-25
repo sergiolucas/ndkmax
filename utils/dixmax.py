@@ -58,7 +58,7 @@ async def obtener_enlace(client, media_id: str, is_movie: bool, season=0, episod
     sid = perfil.sid
     tipo = 0 if is_movie else 1
 
-    url = f"{URL_BASE}/get/hash_link_v6/{APP_KEY}/{sid}/{tipo}/{media_id}"
+    url = f"{URL_BASE}/get/tv_hash_link_v6/{APP_KEY}/{sid}/{tipo}/{media_id}"
     data = {"auth": AUTH_STR, "season": season, "episode": episode}
 
     logger.debug(f"[DIXMAX] POST {url}")

@@ -1,6 +1,7 @@
+import re
 import httpx
 import asyncio
-from urllib.parse import urljoin 
+from urllib.parse import urljoin
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -89,3 +90,80 @@ def filter_manifest_by_quality(content: str, target_bandwidth: int):
                     filtered_lines.append(lines[i+1])
     
     return "\n".join(filtered_lines)
+
+
+async def diagnose_manifest(client: httpx.AsyncClient, target_url: str):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept-Encoding": "gzip, deflate"
+    }
+    result = {"url": target_url, "status": None, "variants": [], "error": None}
+
+    # 1. Fetch master manifest
+    try:
+        resp = await client.get(target_url, headers=headers)
+        result["status"] = resp.status_code
+        if resp.status_code != 200:
+            result["error"] = f"Master returned {resp.status_code}"
+            return result
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+
+    base_url = str(resp.url)
+    lines = resp.text.splitlines()
+
+    # 2. Extract variant playlist URLs
+    variant_urls = []
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if line.startswith("#EXT-X-STREAM-INF"):
+            res_match = re.search(r'RESOLUTION=\d+x(\d+)', line)
+            quality = f"{res_match.group(1)}p" if res_match else "unknown"
+            if i + 1 < len(lines) and _is_url(lines[i + 1].strip()):
+                variant_url = urljoin(base_url, lines[i + 1].strip())
+                variant_urls.append({"quality": quality, "url": variant_url})
+
+    # 3. For each variant, fetch and check segments
+    for variant in variant_urls:
+        v_result = {"quality": variant["quality"], "url": variant["url"], "status": None, "segments": [], "error": None}
+
+        try:
+            v_resp = await client.get(variant["url"], headers=headers)
+            v_result["status"] = v_resp.status_code
+            if v_resp.status_code != 200:
+                v_result["error"] = f"Variant returned {v_resp.status_code}"
+                result["variants"].append(v_result)
+                continue
+        except Exception as e:
+            v_result["error"] = str(e)
+            result["variants"].append(v_result)
+            continue
+
+        v_base_url = str(v_resp.url)
+        v_lines = v_resp.text.splitlines()
+
+        # Extract first 3 segment URLs
+        segment_urls = []
+        for vl in v_lines:
+            vl = vl.strip()
+            if _is_url(vl):
+                segment_urls.append(urljoin(v_base_url, vl))
+                if len(segment_urls) >= 3:
+                    break
+
+        # HEAD request each segment
+        for seg_url in segment_urls:
+            seg_result = {"url": seg_url, "status": None, "error": None}
+            try:
+                seg_resp = await client.head(seg_url, headers=headers, timeout=10.0)
+                seg_result["status"] = seg_resp.status_code
+                seg_result["content_type"] = seg_resp.headers.get("content-type", "")
+                seg_result["content_length"] = seg_resp.headers.get("content-length", "")
+            except Exception as e:
+                seg_result["error"] = str(e)
+            v_result["segments"].append(seg_result)
+
+        result["variants"].append(v_result)
+
+    return result
