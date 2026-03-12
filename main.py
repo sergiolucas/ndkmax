@@ -190,8 +190,8 @@ async def debug_check(stream_type: str, stream_id: str):
         perfil = state.gestor.siguiente()
         sid = perfil.sid
         tipo = 0 if is_movie else 1
-        dixmax_url = f"{URL_BASE}/get/tv_hash_link_v6/{APP_KEY}/{sid}/{tipo}/{media.id}"
-        dixmax_body = {"auth": AUTH_STR, "season": season, "episode": episode}
+        dixmax_url = f"{URL_BASE}/get/tv_hash_link_v7/{APP_KEY}/{sid}/{tipo}/{media.id}"
+        dixmax_body = {"auth": AUTH_STR, "season": season, "episode": episode, "pr": perfil.profile_id}
 
         dixmax_resp = await http_client.post(dixmax_url, json=dixmax_body)
         dixmax_raw = dixmax_resp.json()
